@@ -1,0 +1,24 @@
+epoch<-function(date,format) {
+  date<-as.character(date)
+  #
+  # Define possible date formats
+  #
+  if (format=="MDY") {
+    formats <- c("%m/%d/%Y %H:%M:%S","%m/%d/%Y","%m-%d-%Y %H:%M:%S","%m-%d-%Y")
+  } else if (format=="DMY") {
+    formats <- c("%d/%m/%Y %H:%M:%S","%d/%m/%Y","%d-%m-%Y %H:%M:%S","%d-%m-%Y")
+  } else if (format=="YDM") {
+    formats <- c("%Y/%d/%m %H:%M:%S","%Y/%d/%m","%Y-%d-%m %H:%M:%S","%Y-%d-%m")
+  } else if (format=="YMD") {  
+    formats <- c("%Y/%m/%d %H:%M:%S","%Y/%m/%d","%Y-%m-%d %H:%M:%S","%Y-%m-%d")
+  } else {
+    stop("date format not supported")
+  }
+  #
+  # Try each format until one works
+  #
+  for (fmt in formats) {
+    EPC <- try(as.POSIXct(date,format=fmt,tz = "UTC"),silent=TRUE)
+    if (!is.na(EPC)) return(as.numeric(EPC))
+  }
+}
