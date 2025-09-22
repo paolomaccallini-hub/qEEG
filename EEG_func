@@ -1,0 +1,131 @@
+EEG_func<-function() {
+  #
+  # Read
+  #
+  current_dir<-getwd()
+  sub_dir<-"EEG"
+  folder_path<-file.path(current_dir,sub_dir)
+  file_names<-list.files(folder_path)
+  days<-length(file_names)
+  #
+  # For each file, if uncompressed, compress it
+  #
+  for (i in 1:days) {
+    if (!grepl(".gz",file_names[i])) {
+      temp<-read.csv(file.path(folder_path,file_names[i]),header=T,sep=",")
+      file.remove(file.path(folder_path,file_names[i]))
+      file_names[i]<-paste0(file_names[i],".gz")
+      fwrite(temp,file.path(folder_path,file_names[i]))
+    }
+  }
+  #
+  # Store each recording in a list, only readings before 'hour_co' and only one for day
+  #
+  hour_co<-16
+  eeg.data<-list()
+  k<-1
+  for (i in 1:days) {
+    day<-substr(file_names[i],13,22)
+    hour<-substr(file_names[i],25,26)
+    if (as.numeric(hour_co)<20) { 
+      if (!day%in%names(eeg.data)) { # only one reading for day
+        eeg.data[[k]]<-read.csv(file.path(folder_path,file_names[i]),header=T,sep=",")
+        names(eeg.data)[k]<-substr(eeg.data[[k]][1,1],1,10) # name is the date as YYYY-MM-DD
+        k<-k+1
+      }
+    } 
+  }
+  days<-length(eeg.data)
+  #
+  # Arrays for Frequency analysis
+  #
+  Channels<-c("RAW_TP9","RAW_AF7","RAW_AF8","RAW_TP10")
+  Bands<-list(delta=c(0.5,4),theta=c(4,8),alpha=c(8,13),beta=c(13,30),gamma=c(30,45)) 
+  #
+  # Prepare a data frame with the readings, one row per day
+  #
+  v<-rep(NA,days)
+  mydata<-data.frame(date=v,
+                     TP9_delta=v,TP9_theta=v,TP9_alpha=v,TP9_beta=v,TP9_gamma=v,
+                     AF7_delta=v,AF7_theta=v,AF7_alpha=v,AF7_beta=v,AF7_gamma=v,
+                     AF8_delta=v,AF8_theta=v,AF8_alpha=v,AF8_beta=v,AF8_gamma=v,
+                     TP10_delta=v,TP10_theta=v,TP10_alpha=v,TP10_beta=v,TP10_gamma=v)
+  #
+  # For each day, edit time stamp
+  #
+  for (i in 1:days) {
+    mydata$date[i]<-epoch(names(eeg.data)[i],"YMD")
+    eeg.data[[i]]$TimeStamp<-as.POSIXct(eeg.data[[i]]$TimeStamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+    eeg.data[[i]]$TimeStamp<-as.numeric(eeg.data[[i]]$TimeStamp)
+  }
+  #
+  # For each day, estimate sampling frequency (Fs) in Hertz
+  #
+  Fs<-c()
+  for (i in 1:days) {
+    TS<-unique(eeg.data[[i]]$TimeStamp)
+    TS<-TS[order(TS,decreasing=F)]
+    intervals<-diff(TS)
+    Fs[i]<-1/median(intervals,na.rm=T)
+  }
+  #
+  # Remove first and last seconds 
+  #
+  for (i in 1:days) {
+    start.time<-eeg.data[[i]]$TimeStamp[1]+10
+    end.time<-eeg.data[[i]]$TimeStamp[nrow(eeg.data[[i]])]-10
+    eeg.data[[i]]<-subset.data.frame(eeg.data[[i]],TimeStamp>=start.time&TimeStamp<=end.time)    
+  }
+  #
+  # Power Spectral Density 
+  #
+  PDS<-list() 
+  for (i in 1:days) {
+    RawEEG<-subset.data.frame(eeg.data[[i]],select=Channels)
+    RawEEG<-na.omit(RawEEG)
+    PDS[[i]]<-eegfft(RawEEG,Fs=Fs[i],lower=0.5,upper=45) # power spectral density for all channels
+    PDS[[i]]<-data.frame(PDS[[i]]$frequency,PDS[[i]]$strength[,1],PDS[[i]]$strength[,2],
+                         PDS[[i]]$strength[,3],PDS[[i]]$strength[,4])
+    colnames(PDS[[i]])<-c("frequency",Channels)
+  }
+  #
+  # Power 
+  #
+  NC<-1
+  for (i in 1:days) {
+    count<-0
+    for (j in 1:length(Channels)) {
+      temp<-subset.data.frame(PDS[[i]],PDS[[i]]$frequency>=Bands[[1]][1]&PDS[[i]]$frequency<Bands[[5]][2])
+      TotPower<-trapz(temp$frequency,temp[,(j+1)])
+      for (k in 1:length(Bands)) {
+        count<-count+1
+        temp<-subset.data.frame(PDS[[i]],PDS[[i]]$frequency>=Bands[[k]][1]&PDS[[i]]$frequency<Bands[[k]][2])
+        mydata[i,(NC+count)]<-trapz(temp$frequency,temp[,(j+1)])/TotPower # relative power
+      }
+    }
+  }
+  #
+  # Add total power ad total fNIRS for each band
+  #
+  for (i in 1:days) {
+    mydata$Delta[i]<-mydata$AF7_delta[i]+mydata$AF8_delta[i]+mydata$TP9_delta[i]+mydata$TP10_delta[i]
+    mydata$Delta_L[i]<-mydata$AF7_delta[i]+mydata$TP9_delta[i]
+    mydata$Delta_R[i]<-mydata$AF8_delta[i]+mydata$TP10_delta[i]
+    mydata$Theta[i]<-mydata$AF7_theta[i]+mydata$AF8_theta[i]+mydata$TP9_theta[i]+mydata$TP10_theta[i]
+    mydata$Theta_L[i]<-mydata$AF7_theta[i]+mydata$TP9_theta[i]
+    mydata$Theta_R[i]<-mydata$AF8_theta[i]+mydata$TP10_theta[i]
+    mydata$Alpha[i]<-mydata$AF7_alpha[i]+mydata$AF8_alpha[i]+mydata$TP9_alpha[i]+mydata$TP10_alpha[i]
+    mydata$Alpha_L[i]<-mydata$AF7_alpha[i]+mydata$TP9_alpha[i]
+    mydata$Alpha_R[i]<-mydata$AF8_alpha[i]+mydata$TP10_alpha[i]
+    mydata$Beta[i]<-mydata$AF7_beta[i]+mydata$AF8_beta[i]+mydata$TP9_beta[i]+mydata$TP10_beta[i]
+    mydata$Beta_L[i]<-mydata$AF7_beta[i]+mydata$TP9_beta[i]
+    mydata$Beta_R[i]<-mydata$AF8_beta[i]+mydata$TP10_beta[i]
+    mydata$Gamma[i]<-mydata$AF7_gamma[i]+mydata$AF8_gamma[i]+mydata$TP9_gamma[i]+mydata$TP10_gamma[i]
+    mydata$Gamma_L[i]<-mydata$AF7_gamma[i]+mydata$TP9_gamma[i]
+    mydata$Gamma_R[i]<-mydata$AF8_gamma[i]+mydata$TP10_gamma[i]
+  }
+  #
+  # Results
+  #
+  return(mydata)
+}
