@@ -105,7 +105,7 @@ EEG_func<-function() {
     }
   }
   #
-  # Add total power ad total fNIRS for each band
+  # Add total power for each band
   #
   for (i in 1:days) {
     mydata$Delta[i]<-mydata$AF7_delta[i]+mydata$AF8_delta[i]+mydata$TP9_delta[i]+mydata$TP10_delta[i]
